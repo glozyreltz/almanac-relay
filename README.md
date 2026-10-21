@@ -31,7 +31,7 @@ The file keeps its last good copy, and `status.json` records the error. The scre
 
 ## Running it
 
-- It runs by itself on a schedule. GitHub may start a run late when it is busy.
+- It runs by itself on a schedule. GitHub may start a run late when it is busy, or skip it. In its first hour it ran two of the four slots.
 - To run it now, open the Actions tab, choose relay, and press Run workflow.
 - To stop it, open the Actions tab, choose relay, and disable the workflow. The buoys then show as silent after three hours and the shading turns off after six.
 - GitHub switches off schedules in public repositories after 60 days without activity. The workflow writes `heartbeat.txt` once a month and re-enables itself to prevent that.
