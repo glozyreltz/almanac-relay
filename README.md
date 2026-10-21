@@ -1,6 +1,6 @@
 # almanac relay
 
-A small relay for two TRMNL screens on a TRMNL X: the Santa Barbara Coastal Almanac and The Channel.
+A small relay for two TRMNL screens, the Santa Barbara Coastal Almanac and The Channel. Both run on a TRMNL X and on a TRMNL OG, and all four read the same files.
 
 ## Why it exists
 
