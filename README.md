@@ -19,6 +19,9 @@ GitHub's servers reach both. Every 15 minutes this repository fetches them, chec
 | `channel-buoys.json` | NDBC buoys 46053, 46054, 46218, 46069 and 46025, the last 3 hours | The Channel, buoy boxes |
 | `cdip-hs.txt` | CDIP MOP nowcast wave height, every third point of the 0.01 degree grid | The Channel, water shading |
 | `status.json` | When each source was last fetched and what happened | You, when something looks wrong |
+| `index.html` | The same status as a page you can open on a phone | You |
+
+The status page is at https://glozyreltz.github.io/almanac-relay/ once GitHub Pages is on.
 
 The files are the sources' own data, unchanged apart from the JSON being written compactly.
 

@@ -146,12 +146,50 @@ def main():
 
     open(os.path.join(a.site, 'status.json'), 'w').write(json.dumps(status, indent=1))
     open(os.path.join(a.site, '.nojekyll'), 'w').write('')
-    open(os.path.join(a.site, 'index.html'), 'w').write(
-        '<!doctype html><meta charset="utf-8"><title>almanac relay</title>'
-        '<p>Data relay for a TRMNL display. Files: almanac-buoys.json, channel-buoys.json, '
-        'cdip-hs.txt, status.json. Sources: NOAA NDBC through CoastWatch ERDDAP, and CDIP.</p>')
+    open(os.path.join(a.site, 'index.html'), 'w').write(status_page(status))
     # never fail the job for a source: the rest still publishes
     return 0
+
+
+def status_page(status):
+    """A plain page a person can open on a phone to see whether the relay is healthy"""
+    try:
+        from zoneinfo import ZoneInfo
+        la = ZoneInfo('America/Los_Angeles')
+    except Exception:
+        la = datetime.timezone.utc
+
+    def local(iso):
+        if not iso:
+            return 'never'
+        t = datetime.datetime.strptime(iso, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
+        return t.astimezone(la).strftime('%a %b %-d, %-I:%M %p')
+
+    names = {'almanac-buoys.json': 'Buoys for the Almanac (46053, 46054)',
+             'channel-buoys.json': 'Buoys for The Channel (five stations)',
+             'cdip-hs.txt': 'CDIP swell model for The Channel'}
+    rows = []
+    for name, s in status['sources'].items():
+        ok = s.get('ok')
+        state = 'OK' if ok else 'Kept last good copy' if s.get('fetched_at') else 'Never fetched'
+        note = '' if ok else (s.get('error') or '')[:140]
+        rows.append('<tr><td>%s<br><a href="%s">%s</a></td><td class="%s">%s</td><td>%s</td><td>%s</td></tr>'
+                    % (names.get(name, name), name, name, 'ok' if ok else 'bad', state,
+                       local(s.get('newest_reading')), local(s.get('fetched_at')) + ('<br><small>%s</small>' % note if note else '')))
+    return ('<!doctype html><html lang="en"><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1">'
+            '<title>Almanac relay</title><style>'
+            'body{font:16px/1.45 system-ui,-apple-system,sans-serif;margin:24px auto;max-width:760px;padding:0 16px;color:#111}'
+            'h1{font-size:22px;margin:0 0 4px}p{color:#444;margin:4px 0 16px}table{border-collapse:collapse;width:100%%}'
+            'td,th{border-bottom:1px solid #ddd;padding:8px 6px;text-align:left;vertical-align:top;font-size:15px}'
+            'th{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#555}.ok{color:#126b2a;font-weight:600}'
+            '.bad{color:#9a1c1c;font-weight:600}small{color:#666}a{color:#0b4f8a}</style>'
+            '<h1>Almanac relay</h1><p>Fetches CDIP and NOAA buoy data for the TRMNL screens every 15 minutes. '
+            'Updated %s, Santa Barbara time.</p>'
+            '<table><tr><th>Source</th><th>State</th><th>Newest reading</th><th>Fetched</th></tr>%s</table>'
+            '<p><small>Sources: NOAA National Data Buoy Center through CoastWatch ERDDAP, and the Coastal Data '
+            'Information Program at Scripps. Times are when each reading was taken and when the relay last '
+            'got it.</small></p></html>' % (local(status['generated_at']), ''.join(rows)))
 
 
 if __name__ == '__main__':
