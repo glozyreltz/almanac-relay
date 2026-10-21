@@ -1,0 +1,62 @@
+name: relay
+
+# Every 15 minutes, off the top of the hour, fetch CDIP's swell nowcast and
+# the NDBC buoy tables from NOAA's ERDDAP server and publish them on GitHub
+# Pages for the TRMNL screens. GitHub may start a scheduled run late, and the
+# screens judge the age of every reading by its own timestamp.
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # the monthly heartbeat commit
+  pages: write      # publish the site
+  id-token: write   # required by deploy-pages
+  actions: write    # keep this schedule switched on
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fetch the sources
+        run: |
+          owner=$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          python3 relay.py --site site --previous "https://${owner}.github.io/${GITHUB_REPOSITORY#*/}/"
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+      - id: deployment
+        uses: actions/deploy-pages@v5
+
+      # GitHub switches off scheduled workflows in a public repository after
+      # 60 days without activity. Once a month, record a heartbeat commit and
+      # re-enable this workflow, so the relay keeps running unattended.
+      - name: Keep the schedule alive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          last=$(date -u -d "$(cat heartbeat.txt 2>/dev/null || echo 1970-01-01)" +%s 2>/dev/null || echo 0)
+          now=$(date -u +%s)
+          if [ $(( now - last )) -gt $(( 25 * 86400 )) ]; then
+            date -u +%Y-%m-%dT%H:%M:%SZ > heartbeat.txt
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add heartbeat.txt
+            git commit -m "heartbeat" && git push
+            gh api -X PUT "repos/${{ github.repository }}/actions/workflows/relay.yml/enable" || true
+          fi
