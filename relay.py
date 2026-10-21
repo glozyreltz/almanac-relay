@@ -8,9 +8,11 @@ GitHub Actions, fetches both with time to spare, checks what came back, and
 writes the files GitHub Pages then serves to TRMNL.
 
 A source that fails keeps its last good file, so the screens see an older
-reading with its own timestamp and never a broken one. The screens judge
-age by those timestamps: the buoy readings go to dashes after three hours,
-and The Channel stops shading the water when CDIP's hour is six hours old.
+reading with its own timestamp and never a broken one. CDIP has refused
+GitHub's servers too, for a few minutes at a time, and the next run got
+through. The screens judge age by the readings' own timestamps: after three
+hours the buoys show as silent, and The Channel stops shading the water when
+CDIP's hour is six hours old.
 
   python3 relay.py --site site [--previous https://OWNER.github.io/REPO/]
 
@@ -19,6 +21,7 @@ Writes into the site folder:
   channel-buoys.json   NDBC 46053 46054 46218 46069 46025, last 3 hours, with positions
   cdip-hs.txt          CDIP MOP CA_0.01 nowcast wave height, every third point (OPeNDAP text)
   status.json          when each source was last fetched and what happened
+  index.html           the same status as a page a person can read on a phone
 Only the Python standard library is used.
 """
 import argparse, datetime, html, json, os, re, sys, time, urllib.error, urllib.request
