@@ -21,7 +21,7 @@ Writes into the site folder:
   status.json          when each source was last fetched and what happened
 Only the Python standard library is used.
 """
-import argparse, datetime, json, os, re, sys, time, urllib.error, urllib.request
+import argparse, datetime, html, json, os, re, sys, time, urllib.error, urllib.request
 
 ERDDAP = 'https://coastwatch.pfeg.noaa.gov/erddap/tabledap/cwwcNDBCMet.json'
 SOURCES = {
@@ -55,6 +55,20 @@ def fetch(url, agent):
     req = urllib.request.Request(url, headers={'User-Agent': agent, 'Accept': '*/*'})
     with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
         return r.status, r.read()
+
+
+def http_error(e):
+    """an HTTP refusal as one short line of plain text: the code, the reason, and
+    whatever the server's page says beyond that, with its markup removed"""
+    err = ('HTTP %d %s' % (e.code, e.reason or '')).strip()
+    try:
+        body = (e.read() or b'')[:600].decode('latin-1', 'replace')
+    except Exception:
+        body = ''
+    text = re.sub(r'\s+', ' ', re.sub(r'<[^>]*>', ' ', body)).strip()
+    if text and not set(text.lower().split()) <= set(err.lower().split()):
+        err += ': ' + text[:120]
+    return err
 
 
 def check_erddap(body, columns):
@@ -131,7 +145,7 @@ def main():
                 err = None
                 break
             except urllib.error.HTTPError as e:
-                err = 'HTTP %d %s' % (e.code, (e.read() or b'')[:160].decode('latin-1', 'replace').strip())
+                err = http_error(e)
             except Exception as e:
                 err = '%s: %s' % (type(e).__name__, e)
             print('%s try %d failed after %.1f s: %s' % (name, k + 1, time.time() - t0, err))
@@ -168,25 +182,34 @@ def status_page(status):
     names = {'almanac-buoys.json': 'Buoys for the Almanac (46053, 46054)',
              'channel-buoys.json': 'Buoys for The Channel (five stations)',
              'cdip-hs.txt': 'CDIP swell model for The Channel'}
+    # every string from a source or a server is escaped: an error page is data, not markup
+    e = html.escape
     rows = []
     for name, s in status['sources'].items():
         ok = s.get('ok')
         state = 'OK' if ok else 'Kept last good copy' if s.get('fetched_at') else 'Never fetched'
         note = '' if ok else (s.get('error') or '')[:140]
-        rows.append('<tr><td>%s<br><a href="%s">%s</a></td><td class="%s">%s</td><td>%s</td><td>%s</td></tr>'
-                    % (names.get(name, name), name, name, 'ok' if ok else 'bad', state,
-                       local(s.get('newest_reading')), local(s.get('fetched_at')) + ('<br><small>%s</small>' % note if note else '')))
+        rows.append('<tr><td><b>%s</b><br><a href="%s">%s</a></td><td class="%s" data-l="State">%s</td>'
+                    '<td data-l="Newest reading">%s</td><td data-l="Fetched">%s%s</td></tr>'
+                    % (e(names.get(name, name)), e(name), e(name), 'ok' if ok else 'bad', e(state),
+                       e(local(s.get('newest_reading'))), e(local(s.get('fetched_at'))),
+                       '<br><small>%s</small>' % e(note) if note else ''))
     return ('<!doctype html><html lang="en"><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
             '<title>Almanac relay</title><style>'
-            'body{font:16px/1.45 system-ui,-apple-system,sans-serif;margin:24px auto;max-width:760px;padding:0 16px;color:#111}'
+            'body{font:16px/1.45 system-ui,-apple-system,sans-serif;margin:24px auto;max-width:760px;padding:0 16px;color:#111;background:#fff}'
             'h1{font-size:22px;margin:0 0 4px}p{color:#444;margin:4px 0 16px}table{border-collapse:collapse;width:100%%}'
             'td,th{border-bottom:1px solid #ddd;padding:8px 6px;text-align:left;vertical-align:top;font-size:15px}'
-            'th{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#555}.ok{color:#126b2a;font-weight:600}'
-            '.bad{color:#9a1c1c;font-weight:600}small{color:#666}a{color:#0b4f8a}</style>'
+            'th{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#555}td b{font-weight:600}'
+            '.ok{color:#126b2a;font-weight:600}.bad{color:#9a1c1c;font-weight:600}small{color:#666;overflow-wrap:anywhere}a{color:#0b4f8a}'
+            '@media (max-width:560px){table,tbody,tr,td{display:block;width:auto}thead{display:none}'
+            'tr{border-bottom:1px solid #ddd;padding:10px 0}td{border:0;padding:2px 0}'
+            'td[data-l]:before{content:attr(data-l);display:inline-block;min-width:11em;margin-right:.4em;color:#555;font-size:13px;'
+            'font-weight:400;text-transform:uppercase;letter-spacing:.05em}}</style>'
             '<h1>Almanac relay</h1><p>Fetches CDIP and NOAA buoy data for the TRMNL screens every 15 minutes. '
             'Updated %s, Santa Barbara time.</p>'
-            '<table><tr><th>Source</th><th>State</th><th>Newest reading</th><th>Fetched</th></tr>%s</table>'
+            '<table><thead><tr><th>Source</th><th>State</th><th>Newest reading</th><th>Fetched</th></tr></thead>'
+            '<tbody>%s</tbody></table>'
             '<p><small>Sources: NOAA National Data Buoy Center through CoastWatch ERDDAP, and the Coastal Data '
             'Information Program at Scripps. Times are when each reading was taken and when the relay last '
             'got it.</small></p></html>' % (local(status['generated_at']), ''.join(rows)))
