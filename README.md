@@ -7,7 +7,7 @@ A small relay for two TRMNL screens, the Santa Barbara Coastal Almanac and The C
 TRMNL's servers cannot reach two of the sources the screens need.
 
 - CDIP's server answered TRMNL with 403 Forbidden on every try.
-- NOAA's ERDDAP server often takes longer than the 10 seconds TRMNL allows.
+- The buoys publish plain-text files the screens cannot read. NOAA's ERDDAP copy of them was slow for TRMNL, and on 22 October 2026 it had no wave readings after 1:50 AM while the buoys kept sending them. The relay now reads NDBC's own files and writes them in the JSON table shape the screens expect.
 
 GitHub's servers reach both. Every 15 minutes this repository fetches them, checks what came back, and publishes the files on GitHub Pages, which TRMNL reaches in a fraction of a second. CDIP has also refused GitHub's servers for a few minutes at a time. The relay keeps its last good copy when that happens and tries again on the next run.
 
@@ -15,8 +15,8 @@ GitHub's servers reach both. Every 15 minutes this repository fetches them, chec
 
 | File | Source | Used by |
 |---|---|---|
-| `almanac-buoys.json` | NDBC buoys 46053 and 46054, the last 6 hours, through ERDDAP | The Almanac, seas and water |
-| `channel-buoys.json` | NDBC buoys 46053, 46054, 46218, 46069 and 46025, the last 3 hours | The Channel, buoy boxes |
+| `almanac-buoys.json` | NDBC buoys 46053 and 46054, the last 6 hours, from NDBC's realtime files | The Almanac, seas and water |
+| `channel-buoys.json` | NDBC buoys 46053, 46054, 46218, 46069 and 46025, the last 3 hours, from NDBC's realtime files | The Channel, buoy boxes |
 | `cdip-hs.txt` | CDIP MOP nowcast wave height, every third point of the 0.01 degree grid | The Channel, water shading |
 | `status.json` | When each source was last fetched and what happened | You, when something looks wrong |
 | `index.html` | The same status as a page you can open on a phone | You |

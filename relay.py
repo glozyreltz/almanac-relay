@@ -2,10 +2,12 @@
 """Relay for the Santa Barbara Coastal Almanac and The Channel on TRMNL.
 
 TRMNL's servers cannot reach two of the sources these screens need. CDIP's
-server answers them with 403 Forbidden, and NOAA's ERDDAP server often takes
-longer than the 10 seconds TRMNL allows. This script runs on a schedule in
-GitHub Actions, fetches both with time to spare, checks what came back, and
-writes the files GitHub Pages then serves to TRMNL.
+server answers them with 403 Forbidden. The buoys come as NDBC's plain-text
+realtime files, which the screens cannot read, and NOAA's ERDDAP copy of them
+was slow for TRMNL and, on 22 Oct 2026, missing every wave reading after
+08:50 UTC while the buoys kept reporting them. This script runs on a schedule
+in GitHub Actions, fetches the sources with time to spare, checks what came
+back, and writes the files GitHub Pages then serves to TRMNL.
 
 A source that fails keeps its last good file, so the screens see an older
 reading with its own timestamp and never a broken one. CDIP has refused
@@ -17,8 +19,10 @@ CDIP's hour is six hours old.
   python3 relay.py --site site [--previous https://OWNER.github.io/REPO/]
 
 Writes into the site folder:
-  almanac-buoys.json   NDBC 46053 and 46054, last 6 hours (ERDDAP's JSON table)
+  almanac-buoys.json   NDBC 46053 and 46054, last 6 hours
   channel-buoys.json   NDBC 46053 46054 46218 46069 46025, last 3 hours, with positions
+                       Both from NDBC's own realtime files, written in the shape of
+                       ERDDAP's JSON table and in its units, which the screens read.
   cdip-hs.txt          CDIP MOP CA_0.01 nowcast wave height, every third point (OPeNDAP text)
   status.json          when each source was last fetched and what happened
   index.html           the same status as a page a person can read on a phone
@@ -26,19 +30,19 @@ Only the Python standard library is used.
 """
 import argparse, datetime, html, json, os, re, sys, time, urllib.error, urllib.request
 
-ERDDAP = 'https://coastwatch.pfeg.noaa.gov/erddap/tabledap/cwwcNDBCMet.json'
+NDBC = 'https://www.ndbc.noaa.gov/data/realtime2/%s.txt'
+# where each buoy sits, as NOAA's ERDDAP reported it on 21 Oct 2026 (NDBC's text files carry no position)
+POSITION = {'46053': (34.248, -119.841), '46054': (34.274, -120.459), '46218': (34.451, -120.769),
+            '46069': (33.67, -120.2), '46025': (33.749, -119.053)}
 SOURCES = {
     'almanac-buoys.json': {
-        'kind': 'erddap',
-        'url': ERDDAP + '?station,time,WD,WSPD,GST,WVHT,DPD,MWD,WTMP&station=~%2246053%7C46054%22'
-                        '&time%3E=now-6hours&orderByDescending(%22time%22)',
+        'kind': 'ndbc', 'stations': ['46053', '46054'], 'hours': 6,
+        'url': NDBC % '46053' + ' and 46054',
         'columns': ['station', 'time', 'WD', 'WSPD', 'GST', 'WVHT', 'DPD', 'MWD', 'WTMP'],
     },
     'channel-buoys.json': {
-        'kind': 'erddap',
-        'url': ERDDAP + '?station,time,longitude,latitude,WD,WSPD,GST,WVHT,DPD,MWD,WTMP'
-                        '&station=~%2246053%7C46054%7C46218%7C46069%7C46025%22'
-                        '&time%3E=now-3hours&orderByDescending(%22time%22)',
+        'kind': 'ndbc', 'stations': ['46053', '46054', '46218', '46069', '46025'], 'hours': 3,
+        'url': NDBC % '46053' + ' and 46054, 46218, 46069, 46025',
         'columns': ['station', 'time', 'longitude', 'latitude', 'WD', 'WSPD', 'GST', 'WVHT', 'DPD', 'MWD', 'WTMP'],
     },
     'cdip-hs.txt': {
@@ -54,8 +58,11 @@ def now_iso():
     return datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
-def fetch(url, agent):
-    req = urllib.request.Request(url, headers={'User-Agent': agent, 'Accept': '*/*'})
+def fetch(url, agent, head=None):
+    h = {'User-Agent': agent, 'Accept': '*/*'}
+    if head:
+        h['Range'] = 'bytes=0-%d' % (head - 1)
+    req = urllib.request.Request(url, headers=h)
     with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
         return r.status, r.read()
 
@@ -89,6 +96,67 @@ def check_erddap(body, columns):
     for s in (times[0], times[-1]):
         datetime.datetime.strptime(s, '%Y-%m-%dT%H:%M:%SZ')
     return json.dumps(d, separators=(',', ':')).encode('utf-8'), times[-1]
+
+
+UNITS = {'WD': 'degrees_true', 'WSPD': 'm s-1', 'GST': 'm s-1', 'WVHT': 'm', 'DPD': 's', 'MWD': 'degrees_true',
+         'WTMP': 'degree_C', 'longitude': 'degrees_east', 'latitude': 'degrees_north', 'time': 'UTC'}
+
+
+def ndbc_rows(text, stn, columns, since):
+    """the rows of one NDBC realtime file newer than since, newest first, as ERDDAP would give them:
+    MM becomes null, whole numbers stay whole, units unchanged (NDBC and ERDDAP both use m/s, m, s, degC)"""
+    lines = [l for l in text.splitlines() if l.strip()]
+    head = lines[0].lstrip('#').split()
+    if head[:5] != ['YY', 'MM', 'DD', 'hh', 'mm']:
+        raise ValueError('%s: not an NDBC realtime file: %r' % (stn, lines[0][:60]))
+    idx = {c: head.index(c) for c in ('WDIR', 'WSPD', 'GST', 'WVHT', 'DPD', 'MWD', 'WTMP')}
+    name = {'WD': 'WDIR'}
+    rows = []
+    for l in lines[2:]:
+        f = l.split()
+        if len(f) < len(head):
+            continue  # the last line of a partial download
+        t = datetime.datetime(int(f[0]), int(f[1]), int(f[2]), int(f[3]), int(f[4]), tzinfo=datetime.timezone.utc)
+        if t < since:
+            break
+        row = []
+        for c in columns:
+            if c == 'station':
+                row.append(stn)
+            elif c == 'time':
+                row.append(t.strftime('%Y-%m-%dT%H:%M:%SZ'))
+            elif c == 'latitude':
+                row.append(POSITION[stn][0])
+            elif c == 'longitude':
+                row.append(POSITION[stn][1])
+            else:
+                v = f[idx[name.get(c, c)]]
+                row.append(None if v == 'MM' else (int(float(v)) if float(v).is_integer() else float(v)))
+        rows.append(row)
+    return rows
+
+
+def fetch_ndbc(s, agent):
+    """every station's recent rows in one ERDDAP-shaped table; a station that fails is left out,
+    as ERDDAP leaves out a silent buoy, and the file fails only when every station does"""
+    since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=s['hours'])
+    rows, errs = [], []
+    for stn in s['stations']:
+        try:
+            code, body = fetch(NDBC % stn, agent, head=40000)
+            rows += ndbc_rows(body.decode('latin-1'), stn, s['columns'], since)
+        except urllib.error.HTTPError as e:
+            errs.append('%s %s' % (stn, http_error(e)))
+        except Exception as e:
+            errs.append('%s %s: %s' % (stn, type(e).__name__, e))
+    if len(errs) == len(s['stations']):
+        raise ValueError('; '.join(errs))
+    if not rows:
+        raise ValueError('no rows in the last %d hours' % s['hours'])
+    rows.sort(key=lambda r: r[1], reverse=True)
+    d = {'table': {'columnNames': s['columns'], 'columnUnits': [UNITS.get(c) for c in s['columns']], 'rows': rows}}
+    out, newest = check_erddap(json.dumps(d).encode('utf-8'), s['columns'])
+    return out, newest, errs
 
 
 def check_cdip(body):
@@ -137,14 +205,16 @@ def main():
         for k in range(TRIES):
             t0 = time.time()
             try:
-                code, body = fetch(s['url'], agent)
-                if s['kind'] == 'erddap':
-                    out, newest = check_erddap(body, s['columns'])
+                partial = []
+                if s['kind'] == 'ndbc':
+                    out, newest, partial = fetch_ndbc(s, agent)
                 else:
+                    code, body = fetch(s['url'], agent)
                     out, newest = check_cdip(body)
                 open(os.path.join(a.site, name), 'wb').write(out)
                 st.update({'ok': True, 'fetched_at': now_iso(), 'newest_reading': newest,
-                           'bytes': len(out), 'seconds': round(time.time() - t0, 1), 'error': None})
+                           'bytes': len(out), 'seconds': round(time.time() - t0, 1),
+                           'error': ('missing ' + '; '.join(partial)) if partial else None})
                 err = None
                 break
             except urllib.error.HTTPError as e:
@@ -191,7 +261,7 @@ def status_page(status):
     for name, s in status['sources'].items():
         ok = s.get('ok')
         state = 'OK' if ok else 'Kept last good copy' if s.get('fetched_at') else 'Never fetched'
-        note = '' if ok else (s.get('error') or '')[:140]
+        note = (s.get('error') or '')[:140]
         rows.append('<tr><td><b>%s</b><br><a href="%s">%s</a></td><td class="%s" data-l="State">%s</td>'
                     '<td data-l="Newest reading">%s</td><td data-l="Fetched">%s%s</td></tr>'
                     % (e(names.get(name, name)), e(name), e(name), 'ok' if ok else 'bad', e(state),
@@ -213,7 +283,7 @@ def status_page(status):
             'Updated %s, Santa Barbara time.</p>'
             '<table><thead><tr><th>Source</th><th>State</th><th>Newest reading</th><th>Fetched</th></tr></thead>'
             '<tbody>%s</tbody></table>'
-            '<p><small>Sources: NOAA National Data Buoy Center through CoastWatch ERDDAP, and the Coastal Data '
+            '<p><small>Sources: NOAA National Data Buoy Center realtime files, and the Coastal Data '
             'Information Program at Scripps. Times are when each reading was taken and when the relay last '
             'got it.</small></p></html>' % (local(status['generated_at']), ''.join(rows)))
 
